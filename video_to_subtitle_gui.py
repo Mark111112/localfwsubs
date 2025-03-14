@@ -14,6 +14,20 @@ import logging
 from pathlib import Path
 from faster_whisper import WhisperModel
 
+env_path = os.path.dirname(sys.executable)
+site_packages = os.path.join(env_path, "Lib", "site-packages")
+
+# 添加到系统路径
+if os.path.exists(site_packages):
+    sys.path.insert(0, site_packages)
+    print(site_packages)
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = sys._MEIPASS  # 临时解压目录
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 # Function to load configuration
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -35,8 +49,11 @@ def check_model_exists(model_path):
 # Function to select video file
 def select_video_file():
     video_file = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4 *.avi *.mkv *.mov *.flv *.wmv *.webm"), ("Audio files", "*.mp3 *.wav *.aac *.flac *.ogg")])
-    video_file_entry.delete(0, tk.END)
-    video_file_entry.insert(0, video_file)
+    if video_file:  # Check if a file was selected
+        video_file_entry.delete(0, tk.END)
+        video_file_entry.insert(0, video_file)
+    else:
+        messagebox.showerror("Error", "No file selected.")
 
 # Function to select output directory
 def select_output_directory():
@@ -58,10 +75,9 @@ def select_folder():
 
 # Function to run transcription with model path
 def run_transcription():
-    video_file = video_file_entry.get()
-    folder = folder_entry.get()
+    video_file = video_file_entry.get()  # Get the selected video file
+    folder = folder_entry.get()  # Get the selected folder
     output_directory = output_directory_entry.get()
-    language = language_var.get()
     model_path = model_path_entry.get()
 
     if not output_directory:
@@ -81,43 +97,106 @@ def run_transcription():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
 
-    if video_file:
-        # Handle single video/audio file
-        video_name = os.path.splitext(os.path.basename(video_file))[0]
-        output_file = os.path.join(output_directory, f"{video_name}.srt")
-
+    if video_file:  # Check if a video file is selected
+        # Handle single video file
         command = [
-            "python", "video_to_subtitle.py", video_file, output_file,
-            "--subtitle_format", "srt", "--language", language,
+            "python", "video_to_subtitle.py", video_file,
+            "--subtitle_format", "srt",
             "--model_path", model_path
         ]
+        
+        # Only add language parameter if it's not "auto"
+        if language_var.get() != "auto":
+            command.extend(["--language", language_var.get()])
 
         try:
             subprocess.run(command, check=True)
             messagebox.showinfo("Success", f"Transcription completed successfully for {os.path.basename(video_file)}.")
         except subprocess.CalledProcessError as e:
             messagebox.showerror("Error", f"Transcription failed for {os.path.basename(video_file)}: {e}")
-    elif folder:
+    elif folder:  # Check if a folder is selected
         # Handle folder of video/audio files
-        for filename in os.listdir(folder):
-            if filename.endswith((".mp4", ".avi", ".mkv", ".mov", ".flv", ".wmv", ".webm", ".mp3", ".wav", ".aac", ".flac", ".ogg")):
-                video_file = os.path.join(folder, filename)
-                video_name = os.path.splitext(os.path.basename(video_file))[0]
-                output_file = os.path.join(output_directory, f"{video_name}.srt")
+        command = [
+            "python", "video_to_subtitle.py", folder,
+            "--subtitle_format", "srt",
+            "--model_path", model_path
+        ]
+        
+        # Only add language parameter if it's not "auto"
+        if language_var.get() != "auto":
+            command.extend(["--language", language_var.get()])
 
-                command = [
-                    "python", "video_to_subtitle.py", video_file, output_file,
-                    "--subtitle_format", "srt", "--language", language,
-                    "--model_path", model_path
-                ]
-
-                try:
-                    subprocess.run(command, check=True)
-                    messagebox.showinfo("Success", f"Transcription completed successfully for {filename}.")
-                except subprocess.CalledProcessError as e:
-                    messagebox.showerror("Error", f"Transcription failed for {filename}: {e}")
+        try:
+            subprocess.run(command, check=True)
+            messagebox.showinfo("Success", f"Transcription completed successfully for all files in {os.path.basename(folder)}.")
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror("Error", f"Transcription failed for folder {os.path.basename(folder)}: {e}")
     else:
-        messagebox.showerror("Error", "Please select a video/audio file or a folder.")
+        messagebox.showerror("Error", "Please select a video file or a folder.")
+
+# Function to run transcription with translation
+def run_transcription_with_translation():
+    video_file = video_file_entry.get()  # Get the selected video file
+    folder = folder_entry.get()  # Get the selected folder
+    output_directory = output_directory_entry.get()
+    model_path = model_path_entry.get()
+    target_language = language_var.get()  # Assuming target_language is the same as language for now
+
+    if not output_directory:
+        messagebox.showerror("Error", "Please select an output directory.")
+        return
+
+    if not model_path:
+        messagebox.showerror("Error", "Please select a model path.")
+        return
+
+    if not check_model_exists(model_path):
+        messagebox.showinfo("Info", "Model not found. Downloading model...")
+        download_model(model_path)
+        messagebox.showinfo("Info", "Model downloaded successfully.")
+
+    # Change the current working directory to the script's directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
+
+    if video_file:  # Check if a video file is selected
+        # Handle single video file
+        command = [
+            "python", "video_to_subtitle.py", video_file,
+            "--subtitle_format", "srt",
+            "--model_path", model_path,
+            "--translate", "--target_language", target_language
+        ]
+        
+        # Only add language parameter if it's not "auto"
+        if language_var.get() != "auto":
+            command.extend(["--language", language_var.get()])
+
+        try:
+            subprocess.run(command, check=True)
+            messagebox.showinfo("Success", f"Transcription completed successfully for {os.path.basename(video_file)}.")
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror("Error", f"Transcription failed for {os.path.basename(video_file)}: {e}")
+    elif folder:  # Check if a folder is selected
+        # Handle folder of video/audio files
+        command = [
+            "python", "video_to_subtitle.py", folder,
+            "--subtitle_format", "srt",
+            "--model_path", model_path,
+            "--translate", "--target_language", target_language
+        ]
+        
+        # Only add language parameter if it's not "auto"
+        if language_var.get() != "auto":
+            command.extend(["--language", language_var.get()])
+
+        try:
+            subprocess.run(command, check=True)
+            messagebox.showinfo("Success", f"Transcription completed successfully for all files in {os.path.basename(folder)}.")
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror("Error", f"Transcription failed for folder {os.path.basename(folder)}: {e}")
+    else:
+        messagebox.showerror("Error", "Please select a video file or a folder.")
 
 # Load configuration
 config = load_config()
@@ -171,69 +250,7 @@ language_menu.grid(row=4, column=1, padx=10, pady=10)
 run_button = tk.Button(root, text="转录字幕(源语言)", command=run_transcription)
 run_button.grid(row=5, column=0, columnspan=3, pady=10)
 
-def run_transcription_with_translation():
-    video_file = video_file_entry.get()
-    folder = folder_entry.get()
-    output_directory = output_directory_entry.get()
-    language = language_var.get()
-    model_path = model_path_entry.get()
-    target_language = language_var.get()  # Assuming target_language is the same as language for now
-
-    if not output_directory:
-        messagebox.showerror("Error", "Please select an output directory.")
-        return
-
-    if not model_path:
-        messagebox.showerror("Error", "Please select a model path.")
-        return
-
-    if not check_model_exists(model_path):
-        messagebox.showinfo("Info", "Model not found. Downloading model...")
-        download_model(model_path)
-        messagebox.showinfo("Info", "Model downloaded successfully.")
-
-    # Change the current working directory to the script's directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(script_dir)
-
-    if video_file:
-        # Handle single video/audio file
-        video_name = os.path.splitext(os.path.basename(video_file))[0]
-        output_file = os.path.join(output_directory, f"{video_name}.srt")
-
-        command = [
-            "python", "video_to_subtitle.py", video_file, output_file,
-            "--subtitle_format", "srt", "--language", language,
-            "--model_path", model_path, "--translate", "--target_language", target_language
-        ]
-
-        try:
-            subprocess.run(command, check=True)
-            messagebox.showinfo("Success", f"Transcription completed successfully for {os.path.basename(video_file)}.")
-        except subprocess.CalledProcessError as e:
-            messagebox.showerror("Error", f"Transcription failed for {os.path.basename(video_file)}: {e}")
-    elif folder:
-        # Handle folder of video/audio files
-        for filename in os.listdir(folder):
-            if filename.endswith((".mp4", ".avi", ".mkv", ".mov", ".flv", ".wmv", ".webm", ".mp3", ".wav", ".aac", ".flac", ".ogg")):
-                video_file = os.path.join(folder, filename)
-                video_name = os.path.splitext(os.path.basename(video_file))[0]
-                output_file = os.path.join(output_directory, f"{video_name}.srt")
-
-                command = [
-                    "python", "video_to_subtitle.py", video_file, output_file,
-                    "--subtitle_format", "srt", "--language", language,
-                    "--model_path", model_path, "--translate", "--target_language", target_language
-                ]
-
-                try:
-                    subprocess.run(command, check=True)
-                    messagebox.showinfo("Success", f"Transcription completed successfully for {filename}.")
-                except subprocess.CalledProcessError as e:
-                    messagebox.showerror("Error", f"Transcription failed for {filename}: {e}")
-    else:
-        messagebox.showerror("Error", "Please select a video/audio file or a folder.")
-
+# Run transcription 双语button
 run_transcription_with_translation_button = tk.Button(root, text="转录字幕(双语)", command=run_transcription_with_translation)
 run_transcription_with_translation_button.grid(row=6, column=0, columnspan=3, pady=10)
 

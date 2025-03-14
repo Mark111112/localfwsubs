@@ -5,6 +5,7 @@ import requests
 from faster_whisper import WhisperModel
 from moviepy.editor import VideoFileClip
 import subprocess
+import argparse
 
 # 设置日志记录
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -53,12 +54,6 @@ def translate_text(text, target_lang="中文", model="qwen:14b"):
     except Exception as e:
         return f"发生异常：{str(e)}"
 
-# 从命令行参数中获取 model_path
-# model_path = None
-# local_files_only = False
-
-# 模型加载将在 transcribe_video 函数中进行
-
 def extract_audio(video_path, audio_path):
     try:
         video = VideoFileClip(video_path)
@@ -66,7 +61,6 @@ def extract_audio(video_path, audio_path):
         logging.info(f"音频已成功提取到 {audio_path}")
     except Exception as e:
         logging.error(f"提取音频时出错: {e}")
-        raise
 
 def transcribe_audio(audio_path, model, language):
     try:
@@ -116,27 +110,36 @@ def save_subtitles(segments, output_path, subtitle_format, translate=False, targ
         logging.error(f"保存字幕时出错: {e}")
         raise
 
-def transcribe_video(video_path, output_path, subtitle_format, args):
+def transcribe_video(video_path, output_path, subtitle_format, language, args):
     audio_path = "temp_audio.wav"
     try:
         extract_audio(video_path, audio_path)
         model = WhisperModel(args.model_path, device="cuda", compute_type="int8_float16")
-        segments, info = model.transcribe(audio_path, language=args.language, beam_size=5, vad_filter=True)
+        
+        # Use the language parameter only if it's provided
+        segments, info = model.transcribe(audio_path, language=language, beam_size=5, vad_filter=True, vad_parameters=dict(min_silence_duration_ms=2000))
         save_subtitles(segments, output_path, subtitle_format, translate=args.translate, target_language=args.target_language)
+    except Exception as e:
+        logging.error(f"转录视频时出错: {e}")
     finally:
         if os.path.exists(audio_path):
             os.remove(audio_path)
             logging.info(f"临时音频文件 {audio_path} 已删除")
 
-import argparse
-
 def check_model_exists(model_path):
     return os.path.exists(model_path)
 
+def find_video_audio_files(directory):
+    video_audio_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.lower().endswith(('.mp4', '.avi', '.mkv', '.mov', '.mp3', '.wav', '.flac')):
+                video_audio_files.append(os.path.join(root, file))
+    return video_audio_files
+
 def main():
     parser = argparse.ArgumentParser(description="将视频中的语音提取并转化为字幕")
-    parser.add_argument("video_path", type=str, help="视频文件路径")
-    parser.add_argument("output_path", type=str, help="输出字幕文件路径")
+    parser.add_argument("directory", type=str, help="包含视频和音频文件的目录路径")
     parser.add_argument("--subtitle_format", type=str, default="srt", help="字幕格式 (srt, vtt)")
     parser.add_argument("--language", type=str, default="auto", help="语言 (auto, en, ja, ko, zh)")
     parser.add_argument("--model_path", type=str, required=True, help="模型路径")
@@ -148,13 +151,32 @@ def main():
         logging.error(f"模型文件不存在于路径: {args.model_path}")
         return
 
-    base_output_path, ext = os.path.splitext(args.output_path)
-    counter = 1
-    while os.path.exists(args.output_path):
-        args.output_path = f"{base_output_path}-{counter}{ext}"
-        counter += 1
+    # Check if the provided path is a file or a directory
+    if os.path.isfile(args.directory):
+        video_audio_file = args.directory
+        base_output_path, ext = os.path.splitext(video_audio_file)
+        output_path = f"{base_output_path}.{args.subtitle_format}"
+        
+        language = args.language if args.language != "auto" else None
+        transcribe_video(video_audio_file, output_path, args.subtitle_format, language, args)
+    elif os.path.isdir(args.directory):
+        video_audio_files = find_video_audio_files(args.directory)
+        if not video_audio_files:
+            logging.error(f"未找到任何视频或音频文件在目录: {args.directory}")
+            return
 
-    transcribe_video(args.video_path, args.output_path, args.subtitle_format, args)
+        for video_audio_file in video_audio_files:
+            base_output_path, ext = os.path.splitext(video_audio_file)
+            output_path = f"{base_output_path}.{args.subtitle_format}"
+            counter = 1
+            while os.path.exists(output_path):
+                output_path = f"{base_output_path}-{counter}.{args.subtitle_format}"
+                counter += 1
+
+            language = args.language if args.language != "auto" else None
+            transcribe_video(video_audio_file, output_path, args.subtitle_format, language, args)
+    else:
+        logging.error(f"提供的路径既不是文件也不是目录: {args.directory}")
 
 if __name__ == "__main__":
     main()
